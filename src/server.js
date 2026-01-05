@@ -14,6 +14,7 @@ import path from 'path';
 // common js has const var = require('module-name'); as opposed to import var from 'module-name';
 
 import { scrapeIndeedJobs } from './scrapy/scraper.js';
+import { computeScores } from './scrapy/scraper.js';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -68,15 +69,51 @@ app.post('/apply', upload.single('resume'), (req, res) => {
   // runs immediately after being defined
 
   (async () => {
-    const jobs = await scrapeIndeedJobs(role, location, num_pages, true);
-    console.log(jobs);
-  })();
+    let timeStart = Date.now();
+    const { allJobUrls, allJobDescs, allJobTitles} = await scrapeIndeedJobs(role, location, num_pages, true);
+    let timeEnd = Date.now();
+    console.log(`Scraping completed in ${(timeEnd - timeStart)/1000} seconds.`);
+    // this part takes the most time
+    let timeStart2 = Date.now();
+    const scores = await computeScores(allJobDescs, resume.path);
+    let timeEnd2 = Date.now();
+    console.log(`Scoring completed in ${(timeEnd2 - timeStart2)/1000} seconds.`);
 
-  res.send(`
-    <h1>Application Received</h1>
-    <p>Thank you, ${name}.</p>
-    <p>Your application was submitted successfully.</p>
-  `);
+    let resultTable = [];
+
+    for (let i = 0; i < allJobUrls.length; i++) {
+      resultTable.push({
+        title: allJobTitles[i],
+        url: allJobUrls[i],
+        score: scores[i]
+      });
+    }
+    resultTable.sort((a, b) => b.score - a.score);  // sort descending by score
+
+    const seenUrls = new Set();
+    const uniqueResultTable = resultTable.filter(job => {
+      if (seenUrls.has(job.url)) {
+        return false; // skip duplicates
+      }
+      seenUrls.add(job.url);
+      return true; // keep first occurrence
+    });
+
+    console.log('Top Job Matches:');
+    console.log(uniqueResultTable);  
+    
+    console.log('DONE!.');
+
+    res.send(`<h1>Top Job Matches for ${name}</h1>
+      <p>Here are the top job matches based on your resume:</p>
+      <ol>
+      ${resultTable.map((job) => `<li><a href="${job.url}">${job.title}</a> - Score: ${job.score}</li>`).join('')}
+      </ol>
+    </body>
+  </html>`);
+  })();
+ 
+  
 });
 
 
@@ -86,3 +123,6 @@ app.post('/apply', upload.single('resume'), (req, res) => {
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });
+
+
+// i think that after 61 they stop caring

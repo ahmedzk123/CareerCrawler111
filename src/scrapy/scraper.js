@@ -5,8 +5,8 @@
 import { chromium } from 'playwright';
 import * as cheerio from 'cheerio';
 import querystring from 'querystring';  
-import { start } from 'repl';
-
+import { spawn } from 'child_process';
+import { exec } from 'child_process';
 
 
 // main difference is module import syntax as opposed to commonjs require othersie same
@@ -38,85 +38,130 @@ function buildIndeedUrls(role, location, numPages) {
 
 // async function allows to run multiple tasks that take time without blocking main program
 
+
 async function scrapeJobUrls(pageUrl) {
+    const urls = [];
+    const descs = [];
+    const jobTitles = [];
 
-    let urls = []; // to store each job url from the page 
-
-    const browser = await chromium.launch({ headless: false }); // when false it wokrs when true it doesnt
-    // await allows to wait for the promise to resolve before moving on
-    // the promise here is opening the browser instance and awaiting for it to be ready
-
-    // chromium.launch : opens a Chromium browser instance (headless means without GUI)
-
+    // Launch browser (headless false to see it)
+    const browser = await chromium.launch({ headless: false });
     const page = await browser.newPage();
-    // browser.newPage() : opens a new tab in the browser
 
+    // Go to the main jobs page
     await page.goto(pageUrl);
-    // page.goto(pageUrl) : navigates to the specified URL -> indeed job page
 
+    // Get HTML and load the html file into Cheerio
     const html = await page.content();
-    // page.content() : gets the HTML content of the page
-
-    await browser.close();
-    // browser.close() : closes the browser
-
     const $ = cheerio.load(html);
-    // create instance of Cheerio to parse the HTML content
 
-    const jobLinks = $('a[data-jk]');  // all job links have 'data-jk'
-    // could porlly also get jobs descr from here too somehow using tags 
+    // Get all job links (they have data-jk)
+    const jobLinks = $('a[data-jk]');
 
-    // indeed job links are stored in anchor tags with a 'data-jk' attribute
-    // select all <a> tags (links) on the page that have the attribute data-jk.
-    // bascailly imagine a literal html page and then we find all all <a> tags with data-jk attribute
-    // ex: <a href="/job1" data-jk="12345">Software Engineer</a> and collext all that match 
-
-    // $('a[data-jk]') returns a list of all <a> tags with 
-    // data-jk attribute [<a/> dfdsf <a> , <a/> dfjskj <a> , ...]
-
-    urls = [];
-    jobLinks.each((i, link) => {
-        const jobUrl = "https://www.indeed.com/viewjob?jk=" + $(link).attr('data-jk');
+    // Loop through each job link
+    for (let i = 0; i < jobLinks.length; i++) {
+        const jobJK = $(jobLinks[i]).attr('data-jk');
+        const jobUrl = "https://www.indeed.com/viewjob?jk=" + jobJK;
         urls.push(jobUrl);
-    });
 
-    return urls;
+        // Open job detail page to get description
+        const jobPage = await browser.newPage();
+        await jobPage.goto(jobUrl);
+
+        const jobHtml = await jobPage.content();
+        const $$ = cheerio.load(jobHtml);
+
+        // Grab job description
+        const jobDesc = $$('#jobDescriptionText').text().trim();
+        const jobTitle = $$('h1[data-testid="jobTitle"]').text().trim() || $$('h1.jobsearch-JobInfoHeader-title').text().trim();
+
+        descs.push(jobDesc);
+        jobTitles.push(jobTitle);
+
+        await jobPage.close();
+    }
+
+    // Close browser after scraping all jobs
+    await browser.close();
+
+    return { urls, descs, jobTitles };
 }
-
 
 async function scrapeIndeedJobs(role, location, numPages, parallel = true) {
 
     let allJobUrls = [];
+    let allJobDescs = [];
+    let allJobTitles = [];
     const urlPages = buildIndeedUrls(role, location, numPages);  // ARRAY OF PAGES TO SCRAPE
 
-    // in js. 'in' iterates over indices (0, 1, 2, ...) while 'of' iterates over values directly
-
-
     if (!parallel) {
-    for (const pageUrl of urlPages) {
-            const result = await scrapeJobUrls(pageUrl); // for each page we get the actual jobs urls
-
-            // push(..) add the second list elements to the first list
-            // ex : [1, 2]  push ([3, 4]) => [1, 2, 3, 4] instead of [ [1, 2], [3, 4] ]
-            allJobUrls.push(...result);
+        // Sequential scraping
+        for (const pageUrl of urlPages) {
+            const { urls, descs, jobTitles } = await scrapeJobUrls(pageUrl);
+            allJobUrls.push(...urls.toString());
+            allJobDescs.push(...descs.toString());
+            allJobTitles.push(...jobTitles.toString());
         }
-        return allJobUrls;
+    } else {
+        // Parallel scraping
+        const allResults = await Promise.all(urlPages.map(url => scrapeJobUrls(url)));
+
+        for (const result of allResults) {
+            allJobUrls.push(...result.urls);
+            allJobDescs.push(...result.descs);
+            allJobTitles.push(...result.jobTitles);
+        }
     }
 
-    else {
-        const allResults = await Promise.all(urlPages.map(url => scrapeJobUrls(url))
-        // Promise.all runs all the promises in parallel 
-        // urlPages.map(...) creates array where each element is a promise to scrape that page (the entire role page)
-        // .map is a method avaible to all arrays that assigns each index to the function given -> for each url in urlPages we get assocoate jobs
-        // we make the url array indices to its assocaited scrapeJobUrls promise
-
-
-    );
-
-    // we flatten the list of lists into a single list using flat() because each page (promise) returns a list of job urls
-    return allResults.flat();
+    // Return both URLs and descriptions in **all cases**
+    return { allJobUrls, allJobDescs, allJobTitles };
 }
+
+
+import fs from 'fs';
+import path from 'path';
+
+async function computeScores(allJobDescs, resumePath) {
+  return new Promise((resolve, reject) => {
+    const tempFilePath = path.join(process.cwd(), 'temp_job_descs.json');
+    fs.writeFileSync(tempFilePath, JSON.stringify(allJobDescs), 'utf-8');
+
+    const pythonProcess = spawn('C:\\Users\\labee\\CareerCrawler\\venv\\Scripts\\python.exe', [
+      'scrapy/scoring.py',
+      resumePath,
+      tempFilePath
+    ]);
+
+    let output = '';
+    let errors = '';
+
+    pythonProcess.stdout.on('data', data => {
+      output += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', data => {
+      errors += data.toString();
+    });
+
+    pythonProcess.on('close', code => {
+      fs.unlinkSync(tempFilePath);
+
+      if (code !== 0) {
+        reject(`Python exited with code ${code}: ${errors}`);
+        return;
+      }
+
+      try {
+        const scores = JSON.parse(output.trim());
+        resolve(scores);
+      } catch (err) {
+        reject(`Failed to parse Python output: ${err}`);
+      }
+    });
+  });
 }
+
+
 
 
 // test test 
@@ -148,4 +193,4 @@ async function scrapeIndeedJobs(role, location, numPages, parallel = true) {
 
 
 export { scrapeIndeedJobs };
-
+export { computeScores };
