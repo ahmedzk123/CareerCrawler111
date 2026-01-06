@@ -21,7 +21,7 @@ function buildIndeedUrls(role, location, numPages) {
     of urls for the number of pages specified
     bacially get url of pages related to "data analyst" in "toronto"  where each page has its own url
     */
-    const baseUrl = "https://www.indeed.com/jobs?";
+    const baseUrl = "https://ca.indeed.com/jobs?";
     const q = querystring.escape(role);
     const l = querystring.escape(location);
 
@@ -46,6 +46,7 @@ async function scrapeJobUrls(pageUrl) {
 
     // Launch browser (headless false to see it)
     const browser = await chromium.launch({ headless: false });
+    
     const page = await browser.newPage();
 
     // Go to the main jobs page
@@ -61,8 +62,9 @@ async function scrapeJobUrls(pageUrl) {
     // Loop through each job link
     for (let i = 0; i < jobLinks.length; i++) {
         const jobJK = $(jobLinks[i]).attr('data-jk');
-        const jobUrl = "https://www.indeed.com/viewjob?jk=" + jobJK;
+        const jobUrl = "https://ca.indeed.com/viewjob?jk=" + jobJK;
         urls.push(jobUrl);
+        console.log(`Scraping job ${i + 1}/${jobLinks.length}: ${jobUrl}`);
 
         // Open job detail page to get description
         const jobPage = await browser.newPage();

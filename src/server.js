@@ -82,6 +82,7 @@ app.post('/apply', upload.single('resume'), (req, res) => {
     let resultTable = [];
 
     for (let i = 0; i < allJobUrls.length; i++) {
+      if (!allJobTitles[i]) continue;  // skip if Title is empty or null
       resultTable.push({
         title: allJobTitles[i],
         url: allJobUrls[i],
